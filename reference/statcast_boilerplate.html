@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MLB StatCast Simulation Boilerplate</title>
+    <!-- Tailwind CSS for modern styling -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Chalan:wght@700&family=Inter:wght@400;600;800&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #050b14;
+            color: #ffffff;
+            overflow: hidden;
+        }
+        .statcast-font {
+            font-family: 'Inter', sans-serif;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        /* Custom styling for strike zone grid overlay */
+        .strike-zone-grid {
+            background: rgba(255, 255, 255, 0.03);
+            border: 2px dashed rgba(255, 255, 255, 0.2);
+        }
+        .strike-zone-box {
+            border: 3px solid #facc15;
+            box-shadow: 0 0 15px rgba(250, 204, 21, 0.4);
+            background: rgba(250, 204, 21, 0.05);
+        }
+    </style>
+</head>
+<body class="relative h-screen w-screen select-none">
+
+    <!-- 3D Canvas Placeholder (Background) -->
+    <div id="canvas-container" class="absolute inset-0 z-0 flex items-center justify-center bg-gradient-to-b from-[#0a192f] to-[#020c1b]">
+        <!-- Dynamic Mock Grid Field Background -->
+        <div class="absolute inset-0 opacity-10" style="background-image: radial-gradient(#ffffff 1px, transparent 1px); background-size: 20px 20px;"></div>
+        <div class="text-center text-gray-500 z-10 pointer-events-none">
+            <p class="text-xl font-semibold tracking-wider statcast-font mb-2 text-blue-400">WebGL/WebGPU 3D Arena</p>
+            <p class="text-xs">Three.js PBR Environment Renders Here</p>
+        </div>
+    </div>
+
+    <!-- MAIN GAME HUD & STATCAST OVERLAY -->
+    <div id="hud-layer" class="absolute inset-0 z-10 flex flex-col justify-between p-6 pointer-events-none">
+        
+        <!-- TOP BAR: Scoreboard & Pitcher vs Batter Matchup -->
+        <div class="w-full flex justify-between items-start">
+            <!-- Sleek Scoreboard -->
+            <div class="bg-slate-900/90 backdrop-blur-md border border-slate-700/50 rounded-lg p-4 shadow-2xl flex items-center gap-6 pointer-events-auto">
+                <div class="flex items-center gap-3">
+                    <span class="statcast-font text-xs text-gray-400">Match</span>
+                    <div class="flex items-center gap-2">
+                        <span class="bg-red-600 px-2 py-0.5 rounded text-xs font-bold shadow">NYY</span>
+                        <span class="text-lg font-bold">4</span>
+                    </div>
+                    <span class="text-gray-600 font-bold">|</span>
+                    <div class="flex items-center gap-2">
+                        <span class="bg-blue-600 px-2 py-0.5 rounded text-xs font-bold shadow">LAD</span>
+                        <span class="text-lg font-bold">3</span>
+                    </div>
+                </div>
+                
+                <div class="h-8 w-px bg-slate-700"></div>
+
+                <!-- Innings & Outs Count -->
+                <div class="flex items-center gap-4 text-sm font-semibold">
+                    <div class="flex flex-col items-center">
+                        <span class="text-xs text-gray-400">INNING</span>
+                        <span class="statcast-font text-amber-400">▲ 9th</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                        <div class="w-2.5 h-2.5 rounded-full bg-amber-500"></div>
+                        <div class="w-2.5 h-2.5 rounded-full bg-slate-600"></div>
+                        <span class="text-xs text-gray-400 font-bold ml-1">1 OUT</span>
+                    </div>
+                </div>
+
+                <div class="h-8 w-px bg-slate-700"></div>
+
+                <!-- Count -->
+                <div class="statcast-font text-sm flex gap-3 text-slate-300 bg-slate-950/80 px-3 py-1.5 rounded-md">
+                    <div>B: <span class="text-emerald-400">2</span></div>
+                    <div>S: <span class="text-red-400">1</span></div>
+                </div>
+            </div>
+
+            <!-- Active Matchup Display -->
+            <div class="bg-slate-900/90 backdrop-blur-md border border-slate-700/50 rounded-lg p-4 shadow-2xl flex items-center gap-6 pointer-events-auto">
+                <div class="text-right">
+                    <div class="text-xs text-gray-400 font-bold tracking-wider uppercase">Pitching</div>
+                    <div id="active-pitcher" class="text-base font-bold text-white statcast-font">Paul Skenes</div>
+                    <div class="text-xs text-cyan-400 font-medium">99 OVR RHP</div>
+                </div>
+                <div class="statcast-font text-xl text-slate-500 font-black">VS</div>
+                <div class="text-left">
+                    <div class="text-xs text-gray-400 font-bold tracking-wider uppercase">Batting</div>
+                    <div id="active-batter" class="text-base font-bold text-white statcast-font">Aaron Judge</div>
+                    <div class="text-xs text-amber-400 font-medium">99 OVR LHP</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- MIDDLE LAYER: Interactive Pitching & Batting Mechanics HUD -->
+        <div class="w-full flex justify-between items-center my-auto">
+            <!-- Left Side: Pitch Selection Control (For Pitcher Mode) -->
+            <div class="bg-slate-900/80 backdrop-blur-md border border-slate-700/40 rounded-xl p-4 w-64 shadow-xl pointer-events-auto flex flex-col gap-3">
+                <div class="statcast-font text-xs text-cyan-400 font-bold border-b border-slate-700 pb-1">Pitch Arsenal</div>
+                <div class="flex flex-col gap-2">
+                    <button class="w-full text-left bg-cyan-600/20 hover:bg-cyan-600/40 border border-cyan-500/50 rounded-lg p-2.5 transition flex justify-between items-center group cursor-pointer">
+                        <span class="font-bold text-sm">4-Seam Fastball</span>
+                        <span class="text-xs text-cyan-300 font-mono group-hover:text-white">99 MPH</span>
+                    </button>
+                    <button class="w-full text-left bg-slate-800/60 hover:bg-slate-700/80 border border-slate-700/50 rounded-lg p-2.5 transition flex justify-between items-center group cursor-pointer">
+                        <span class="font-bold text-sm">Splinker</span>
+                        <span class="text-xs text-slate-400 font-mono group-hover:text-white">94 MPH</span>
+                    </button>
+                    <button class="w-full text-left bg-slate-800/60 hover:bg-slate-700/80 border border-slate-700/50 rounded-lg p-2.5 transition flex justify-between items-center group cursor-pointer">
+                        <span class="font-bold text-sm">Slider</span>
+                        <span class="text-xs text-slate-400 font-mono group-hover:text-white">86 MPH</span>
+                    </button>
+                    <button class="w-full text-left bg-slate-800/60 hover:bg-slate-700/80 border border-slate-700/50 rounded-lg p-2.5 transition flex justify-between items-center group cursor-pointer">
+                        <span class="font-bold text-sm">Changeup</span>
+                        <span class="text-xs text-slate-400 font-mono group-hover:text-white">88 MPH</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Center: Interactive Strike Zone / Hitting Reticle Preview -->
+            <div class="flex flex-col items-center gap-4">
+                <!-- Strike Zone Container -->
+                <div class="relative w-72 h-80 strike-zone-grid rounded-lg flex items-center justify-center pointer-events-auto cursor-crosshair">
+                    <!-- Target Strike Zone -->
+                    <div class="absolute w-44 h-52 strike-zone-box rounded transition-all duration-300">
+                        <!-- 3x3 Internal Grid lines -->
+                        <div class="grid grid-cols-3 grid-rows-3 h-full w-full opacity-20">
+                            <div class="border-b border-r border-yellow-400"></div>
+                            <div class="border-b border-r border-yellow-400"></div>
+                            <div class="border-b border-yellow-400"></div>
+                            <div class="border-b border-r border-yellow-400"></div>
+                            <div class="border-b border-r border-yellow-400"></div>
+                            <div class="border-b border-yellow-400"></div>
+                            <div class="border-r border-yellow-400"></div>
+                            <div class="border-r border-yellow-400"></div>
+                            <div></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Dynamic Plate Coverage Indicator (PCI) / Hitting Target -->
+                    <div id="pci-reticle" class="absolute w-14 h-14 rounded-full border-2 border-dashed border-amber-400 bg-amber-500/10 flex items-center justify-center pointer-events-none transition-transform duration-75">
+                        <div class="w-2 h-2 bg-amber-400 rounded-full shadow-lg"></div>
+                    </div>
+
+                    <!-- Dynamic Pitch Aiming Target Marker -->
+                    <div id="pitch-target" class="absolute w-6 h-6 rounded-full border border-cyan-400 bg-cyan-500/30 shadow-cyan shadow-md hidden animate-pulse"></div>
+                </div>
+                <div class="bg-black/60 backdrop-blur-sm px-4 py-1.5 rounded-full text-xs text-slate-400 tracking-wide font-medium">
+                    Move <span class="text-amber-400 font-bold">Mouse</span> to overlay Batting PCI Reticle
+                </div>
+            </div>
+
+            <!-- Right Side: Player Mechanics Quick Toggle Mode -->
+            <div class="bg-slate-900/80 backdrop-blur-md border border-slate-700/40 rounded-xl p-4 w-64 shadow-xl pointer-events-auto flex flex-col gap-4">
+                <div class="statcast-font text-xs text-amber-400 font-bold border-b border-slate-700 pb-1">Simulation Mode</div>
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="switchMode('pitcher')" id="btn-pitcher-mode" class="py-2 text-center rounded-lg text-xs font-bold border transition bg-cyan-600/30 border-cyan-500 text-white cursor-pointer shadow-lg shadow-cyan-900/50">PITCHER</button>
+                    <button onclick="switchMode('batter')" id="btn-batter-mode" class="py-2 text-center rounded-lg text-xs font-bold border transition bg-slate-800/80 border-slate-700 text-slate-400 hover:text-white cursor-pointer">BATTER</button>
+                </div>
+                <button onclick="triggerSimulateHit()" class="w-full py-3 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 font-bold rounded-lg text-xs statcast-font tracking-wider shadow-lg shadow-orange-900/40 transition cursor-pointer text-white">
+                    Simulate Random Pitch / Hit
+                </button>
+            </div>
+        </div>
+
+        <!-- BOTTOM LAYER: STATCAST REAL-TIME OVERLAY (Triggers on Hit/Pitch) -->
+        <div id="statcast-panel" class="w-full bg-slate-950/95 backdrop-blur-lg border-t-4 border-blue-500 rounded-t-xl p-6 pointer-events-auto shadow-2xl transition-all duration-500 transform translate-y-0 opacity-100">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-3">
+                    <div class="bg-blue-600 text-white text-xs font-black px-2.5 py-1 rounded tracking-widest statcast-font">STATCAST</div>
+                    <h2 class="text-lg font-extrabold tracking-tight statcast-font text-slate-100">LAUNCH METRICS ANALYSIS</h2>
+                </div>
+                <div class="text-xs text-slate-400 font-mono">LIVE TRACKING SYSTEM // ACTIVE</div>
+            </div>
+            
+            <!-- Core Analytical Telemetry Grid -->
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+                <!-- Metric 1 -->
+                <div class="bg-slate-900/60 border border-slate-800 p-3.5 rounded-lg flex flex-col justify-between">
+                    <span class="text-xs text-slate-400 font-semibold tracking-wider">PITCH SPEED</span>
+                    <div>
+                        <span id="stat-pitch-speed" class="text-3xl font-black font-mono text-cyan-400">101.2</span>
+                        <span class="text-xs text-slate-500 font-bold ml-1">MPH</span>
+                    </div>
+                </div>
+                <!-- Metric 2 -->
+                <div class="bg-slate-900/60 border border-slate-800 p-3.5 rounded-lg flex flex-col justify-between">
+                    <span class="text-xs text-slate-400 font-semibold tracking-wider">SPIN RATE</span>
+                    <div>
+                        <span id="stat-spin-rate" class="text-3xl font-black font-mono text-purple-400">2,540</span>
+                        <span class="text-xs text-slate-500 font-bold ml-1">RPM</span>
+                    </div>
+                </div>
+                <!-- Metric 3 -->
+                <div class="bg-slate-900/60 border border-slate-800 p-3.5 rounded-lg flex flex-col justify-between">
+                    <span class="text-xs text-slate-400 font-semibold tracking-wider">EXIT VELOCITY</span>
+                    <div>
+                        <span id="stat-exit-vel" class="text-3xl font-black font-mono text-amber-400">114.8</span>
+                        <span class="text-xs text-slate-500 font-bold ml-1">MPH</span>
+                    </div>
+                </div>
+                <!-- Metric 4 -->
+                <div class="bg-slate-900/60 border border-slate-800 p-3.5 rounded-lg flex flex-col justify-between">
+                    <span class="text-xs text-slate-400 font-semibold tracking-wider">LAUNCH ANGLE</span>
+                    <div>
+                        <span id="stat-launch-angle" class="text-3xl font-black font-mono text-emerald-400">28.5</span>
+                        <span class="text-xs text-slate-500 font-bold ml-1">DEG°</span>
+                    </div>
+                </div>
+                <!-- Metric 5 -->
+                <div class="bg-slate-900/60 border border-slate-800 p-3.5 rounded-lg flex flex-col justify-between col-span-2 md:col-span-1">
+                    <span class="text-xs text-slate-400 font-semibold tracking-wider">EST. DISTANCE</span>
+                    <div>
+                        <span id="stat-distance" class="text-3xl font-black font-mono text-rose-400">445</span>
+                        <span class="text-xs text-slate-500 font-bold ml-1">FT</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Custom Play Description Text Box -->
+            <div class="mt-4 bg-slate-900/40 border border-slate-800/80 px-4 py-2 rounded-md flex items-center justify-between text-sm">
+                <p id="statcast-desc" class="text-slate-300 font-medium">
+                    ⚡ <span class="font-bold text-white">Aaron Judge</span> impacts the ball with a sweet-spot threshold of 96%. Absolute moonshot!
+                </p>
+                <span class="text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded font-bold uppercase tracking-wide">HOME RUN</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN BOILERPLATE CONTROLLER JAVASCRIPT -->
+    <script>
+        let currentMode = 'pitcher'; // Default active gameplay mode
+        const strikeZone = document.querySelector('.strike-zone-grid');
+        const pciReticle = document.getElementById('pci-reticle');
+        const pitchTarget = document.getElementById('pitch-target');
+
+        // Dynamic Mouse Tracking inside Strike Zone for Reticles
+        strikeZone.addEventListener('mousemove', (e) => {
+            const rect = strikeZone.getBoundingClientRect();
+            const x = e.clientX - rect.left; // x position within element
+            const y = e.clientY - rect.top;  // y position within element
+
+            if (currentMode === 'batter') {
+                // Move Batter PCI smoothly
+                pciReticle.style.transform = `translate(${x - 144}px, ${y - 160}px)`;
+            } else {
+                // Move Pitcher Target Aim
+                pitchTarget.style.transform = `translate(${x - 144}px, ${y - 160}px)`;
+            }
+        });
+
+        // Switch modes logic
+        function switchMode(mode) {
+            currentMode = mode;
+            const btnPitcher = document.getElementById('btn-pitcher-mode');
+            const btnBatter = document.getElementById('btn-batter-mode');
+
+            if (mode === 'pitcher') {
+                btnPitcher.className = "py-2 text-center rounded-lg text-xs font-bold border transition bg-cyan-600/30 border-cyan-500 text-white cursor-pointer shadow-lg shadow-cyan-900/50";
+                btnBatter.className = "py-2 text-center rounded-lg text-xs font-bold border transition bg-slate-800/80 border-slate-700 text-slate-400 hover:text-white cursor-pointer";
+                pitchTarget.classList.remove('hidden');
+                pciReticle.classList.add('opacity-30'); // Dimm the alternate target
+            } else {
+                btnBatter.className = "py-2 text-center rounded-lg text-xs font-bold border transition bg-amber-600/30 border-amber-500 text-white cursor-pointer shadow-lg shadow-amber-900/50";
+                btnPitcher.className = "py-2 text-center rounded-lg text-xs font-bold border transition bg-slate-800/80 border-slate-700 text-slate-400 hover:text-white cursor-pointer";
+                pitchTarget.classList.add('hidden');
+                pciReticle.classList.remove('opacity-30');
+            }
+        }
+
+        // Initialize state
+        switchMode('pitcher');
+
+        // Simulated event trigger for dynamic numbers
+        function triggerSimulateHit() {
+            // Random Stat Builders
+            const randomPitchSpeed = (92 + Math.random() * 11).toFixed(1);
+            const randomSpinRate = Math.floor(2100 + Math.random() * 800);
+            const randomExitVel = (85 + Math.random() * 35).toFixed(1);
+            const randomLaunchAngle = (5 + Math.random() * 40).toFixed(1);
+            const randomDistance = Math.floor(randomExitVel * 3.8 * (randomLaunchAngle / 25));
+
+            // Inject metrics into DOM
+            document.getElementById('stat-pitch-speed').innerText = randomPitchSpeed;
+            document.getElementById('stat-spin-rate').innerText = randomSpinRate.toLocaleString();
+            document.getElementById('stat-exit-vel').innerText = randomExitVel;
+            document.getElementById('stat-launch-angle').innerText = randomLaunchAngle;
+            document.getElementById('stat-distance').innerText = randomDistance;
+
+            // Update Descriptions dynamically based on exit velocities
+            const desc = document.getElementById('statcast-desc');
+            if (randomExitVel > 105 && randomLaunchAngle > 20 && randomLaunchAngle < 35) {
+                desc.innerHTML = `⚡ <span class="font-bold text-white">Aaron Judge</span> impacts the ball with a sweet-spot threshold of 98%. Absolute moonshot!`;
+                desc.nextElementSibling.innerText = "HOME RUN";
+                desc.nextElementSibling.className = "text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded font-bold uppercase tracking-wide";
+            } else if (randomExitVel > 95) {
+                desc.innerHTML = `☄️ Sharp grounder or line drive down the line. Hard hit telemetry confirmed.`;
+                desc.nextElementSibling.innerText = "HIT";
+                desc.nextElementSibling.className = "text-xs bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 px-2 py-0.5 rounded font-bold uppercase tracking-wide";
+            } else {
+                desc.innerHTML = `🛑 Weak contact or swing-and-miss mechanics calculated by physical spin decay.`;
+                desc.nextElementSibling.innerText = "OUT / FOUL";
+                desc.nextElementSibling.className = "text-xs bg-rose-500/20 text-rose-400 border border-rose-500/30 px-2 py-0.5 rounded font-bold uppercase tracking-wide";
+            }
+        }
+    </script>
+</body>
+</html>
