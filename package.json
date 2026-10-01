@@ -1,0 +1,14 @@
+{
+  "name": "pitcher-vs-batter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser 3D pitcher-vs-batter duel with Magnus aerodynamics and StatCast telemetry",
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "test": "node --test \"tests/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -101,7 +101,7 @@ Rules:
 ```bash
 python3 -m http.server 8080      # or: npx serve .
 # open http://localhost:8080
-node --test tests/               # physics + roster tests
+npm test                         # node --test "tests/**/*.test.js"
 ```
 
 ---
@@ -669,42 +669,41 @@ C, P and V are ratings from 1 to 99. Contact and Power are picked by the pitcher
 | Miss bias | **μ** = 2.5 in·\|τ\|·(1.25 − Ctl/99)·s·(−h_p, +1) in (x, y), with s = −sgn τ and τ < 0 meaning early. Early releases (s = +1) sail arm-side high; late releases (s = −1) are yanked glove-side low. |
 | Effort | Holding through the meter's overdrive zone gives +1.2 mph but doubles σ_t |
 
-### 4.4 Roster (2025/26 baselines — **approximate**, verify against Baseball Savant before shipping)
+### 4.4 Roster (2025 baselines)
 
-> These values are reasonable engineering estimates from public 2024–25 Statcast profiles. Gerrit Cole (TJ surgery in March 2025) and Corbin Burnes (TJ surgery in June 2025) use blended pre-injury baselines. Phase 0 of implementation includes a data-verification pass, and the schema doesn't change if numbers move.
+`src/PlayerStats.js` is the source of truth for every number. Each player carries a `source` block with the season, a confidence level and what was checked.
 
-**Batters** (C = contact, P = power, Vis = vision; each split shown as vs LHP / vs RHP):
+**Phase 0 data check.** Baseball Savant is blocked by this environment's network policy, so values were cross-checked against published reporting found by web search (MLB.com, FanGraphs, Pitcher List). These corrections replaced the original estimates in this blueprint:
 
-| id | Name | Team | Bats | Height | C | P | Vis | Bat speed (mph) | Attack angle | Max EV |
-|---|---|---|---|---|---|---|---|---|---|---|
-| judge | Aaron Judge | NYY | R | 6'7" | 86 / 84 | 99 / 99 | 93 | 76.0 | 12° | ~120 |
-| ohtani | Shohei Ohtani | LAD | L | 6'4" | 80 / 88 | 94 / 99 | 90 | 76.0 | 13° | ~120 |
-| soto | Juan Soto | NYM | L | 6'2" | 84 / 90 | 86 / 92 | 99 | 74.5 | 9° | ~117 |
-| raleigh | Cal Raleigh | SEA | S | 6'2" | 70 / 74 | 93 / 96 | 80 | 74.5 | 15° | ~115 |
-
-Raleigh is a switch-hitter: h_b is chosen per pitcher, so he hits right-handed against LHP and left-handed against RHP.
-
-**Pitchers** (Vel / Ctl / Brk; release height, side and extension in ft):
-
-| id | Name | Team | Throws | Vel | Ctl | Brk | Release h / side / ext |
-|---|---|---|---|---|---|---|---|
-| skenes | Paul Skenes | PIT | R | 98 | 90 | 93 | 5.7 / −1.9 / 6.6 |
-| cole | Gerrit Cole | NYY | R | 92 | 92 | 88 | 5.9 / −2.1 / 6.5 |
-| burnes | Corbin Burnes | ARI | R | 86 | 89 | 96 | 5.9 / −2.3 / 6.4 |
-| ohtaniP | Shohei Ohtani | LAD | R | 97 | 78 | 97 | 5.6 / −2.6 / 6.3 |
-| skubal | Tarik Skubal | DET | L | 96 | 95 | 88 | 6.1 / +2.0 / 6.8 |
-
-Skubal is included so that the **vs-LHP** batting splits actually matter.
-
-**Arsenals** (mph · rpm · IVB in · HB arm-side in · usage):
-
-| Pitcher | Pitches |
+| Player | Correction |
 |---|---|
-| Skenes | **FF** 4-Seam 98.3 · 2350 · 16.0 · 9.0 · 38% — **FS** Splinker 94.5 · 1150 · 3.0 · 15.0 · 20% — **ST** Sweeper 84.8 · 2550 · 2.0 · −13.0 · 16% — **CU** Curveball 83.0 · 2700 · −10.0 · −8.0 · 10% — **SI** Sinker 96.8 · 2200 · 8.0 · 16.0 · 16% |
-| Cole | **FF** 4-Seam 96.5 · 2450 · 17.0 · 10.0 · 50% — **SL** Slider 88.5 · 2500 · 2.0 · −5.0 · 20% — **KC** Knuckle-Curve 83.0 · 2700 · −11.0 · −8.0 · 14% — **FC** Cutter 92.0 · 2450 · 9.0 · −1.0 · 8% — **CH** Changeup 89.0 · 1750 · 7.0 · 13.0 · 8% |
-| Burnes | **FC** Cutter 94.5 · 2650 · 8.0 · −2.0 · 50% — **SI** Sinker 95.5 · 2350 · 10.0 · 15.0 · 15% — **CU** Curveball 81.0 · 2850 · −11.0 · −9.0 · 15% — **CH** Changeup 89.0 · 1900 · 5.0 · 15.0 · 12% — **SL** Slider 87.0 · 2600 · 1.0 · −5.0 · 8% |
-| Ohtani | **FF** 4-Seam 98.0 · 2300 · 15.0 · 8.0 · 40% — **ST** Sweeper 85.0 · 2550 · 2.0 · −16.0 · 30% — **FS** Splitter 89.0 · 1350 · 3.0 · 10.0 · 10% — **CU** Curveball 77.0 · 2550 · −8.0 · −11.0 · 8% — **SI** Sinker 96.0 · 2250 · 9.0 · 15.0 · 12% |
-| Skubal | **FF** 4-Seam 97.6 · 2350 · 17.0 · 9.0 · 33% — **CH** Changeup 88.0 · 1650 · 3.0 · 15.0 · 30% — **SI** Sinker 97.0 · 2200 · 10.0 · 16.0 · 17% — **SL** Slider 89.0 · 2550 · 3.0 · −3.0 · 12% — **CU** Curveball 80.0 · 2600 · −8.0 · −9.0 · 8% |
+| Skenes | 4-seam is 98.2 mph / ~2,170 rpm / 11.6 in IVB / 14 in arm-side run: a low-ride, high-run fastball, not the 2,350 rpm / 16 in originally assumed. Splinker is ~1,800 rpm, not 1,150. Changeup replaces the rarely thrown curveball in the top five. |
+| Cole | 2024 baseline (pre-Tommy John): 4-seam 95.9 mph / 2,362 rpm / 17.6 IVB / 6.6 HB / 91.4 % active spin. Slider has only 28 % active spin (gyro). |
+| Burnes | Cutter 95.3 mph, 62 % active spin. Real 2025 usage is FC 53.5 / CU 23.7 / CH 11.1 / SI 7.6 / SL 4.0. |
+| Ohtani (P) | 4-seam 98.1 mph ~2,450 rpm; sweeper ~2,700 rpm; usage FF 45 / ST 29 / CU 10 / FS 9 / SI 5. |
+| Skubal | Usage FF 38 / CH 26 / SI 18 / SL 14 / CU 5; active spin FF 90 %, CH 79 %, SI 87 %. |
+| Batters | 2024 bat-tracking speeds: Judge 76.5, Ohtani 76.3, Soto 75.5 mph. Raleigh 2025 max EV 114.7, avg 91.3. |
+
+Remaining spin rates, IVB/HB splits, release points and attack angles are engineering estimates, marked as such in each player's `source.note`. Arsenals are trimmed to each pitcher's top five pitches (hotkeys 1–5), with usage renormalized to 100.
+
+**Ratings** (1–99):
+
+| Batter | Bats | Contact vs L / R | Power vs L / R | Vision |
+|---|---|---|---|---|
+| Aaron Judge (NYY) | R | 86 / 84 | 99 / 99 | 93 |
+| Shohei Ohtani (LAD) | L | 80 / 88 | 94 / 99 | 90 |
+| Juan Soto (NYM) | L | 84 / 90 | 86 / 92 | 99 |
+| Cal Raleigh (SEA) | S | 70 / 74 | 93 / 96 | 80 |
+
+| Pitcher | Throws | Velocity | Control | Break |
+|---|---|---|---|---|
+| Paul Skenes (PIT) | R | 98 | 90 | 93 |
+| Gerrit Cole (NYY) | R | 92 | 92 | 88 |
+| Corbin Burnes (ARI) | R | 86 | 89 | 96 |
+| Shohei Ohtani (LAD) | R | 97 | 78 | 97 |
+| Tarik Skubal (DET) | L | 96 | 95 | 88 |
+
+Skubal is included so that the **vs-LHP** splits matter. Raleigh switch-hits: he bats right-handed against LHP and left-handed against RHP.
 
 ## 5. Step-by-step blueprint: `PlayerStats.js`
 
@@ -962,7 +961,7 @@ One `AudioContext` is created and resumed on the first user gesture.
 
 | Phase | Deliverable | Exit criteria |
 |---|---|---|
-| 0 | `core/*`, `PlayerStats.js` (+ data verification pass vs. Savant), `package.json`, test harness | `node --test` passes the roster tests |
+| 0 ✅ | `core/*`, `PlayerStats.js` (+ data verification pass), `package.json`, test harness | `npm test` passes the roster and core tests |
 | 1 | `PhysicsEngine.js` complete, headless | Every test in §2.11 passes; calibration fits every roster pitch within 0.5 in |
 | 2 | `StadiumRenderer` with field, lights, shadows, ball, and cameras playing back solved pitches | 60 fps on an integrated GPU at DPR 1.5; the ball visibly breaks; the stitch spin reads correctly in replay |
 | 3 | `GameLoop` + `InputController` + `TelemetryUI` (pitching mode end-to-end, CPU batter) | A full at-bat is playable; the HUD zone aligns with the 3D plate within 2 px |
