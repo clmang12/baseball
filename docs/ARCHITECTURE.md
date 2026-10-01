@@ -12,7 +12,7 @@
 
 | Topic | Decision | Why |
 |---|---|---|
-| Runtime | Native ES modules, **no build step**. Three.js is pinned through an import map (`three@0.170.0` from jsDelivr), and an optional `vendor/` copy supports offline play. | You can start it with `python3 -m http.server 8080` or `npx serve .`. |
+| Runtime | Native ES modules, **no build step**. Three.js r170 is **vendored** in `vendor/three/` (minified core + the post-processing addons, 760 KB, MIT) and mapped by an import map. Phase 2 switched from the CDN because CDNs were unreachable in the build environment, and vendoring also gives offline play and a pinned version. | You can start it with `python3 -m http.server 8080` or `npx serve .`. |
 | Renderer | **WebGL2 `WebGLRenderer` ships first.** `WebGPURenderer` is opt-in with `?gpu=webgpu`, behind a `RendererFactory`. | WebGL2 has mature shadow and post-processing paths. On the WebGPU path, `ShaderMaterial` and `EffectComposer` don't work, so all custom visuals use built-in materials and the post-processing chain is swapped per backend. |
 | Physics | A **pure, dependency-free** module (no Three.js imports) using SI units, `Float64Array` state and fixed-step RK4. It runs in Node too. | Deterministic, unit-testable with `node --test`, and replays are bit-exact. |
 | Simulation style | Each trajectory is **solved once at the event** (release or contact) at 1 ms steps, then **played back** by the renderer at display rate with interpolation. | Telemetry (distance, plate location) is known instantly, the same way Statcast projects it, so there's no frame-rate dependence and contact detection becomes an exact search on a sampled path. |
@@ -32,6 +32,8 @@ baseball/
 ├── README.md                   # Quick start + controls
 ├── styles/
 │   └── hud.css                 # StatCast overlay styles (ported from the boilerplate)
+├── vendor/
+│   └── three/                  # three.js r170 core + post-processing addons (MIT)
 ├── src/
 │   ├── main.js                 # Bootstrap: feature-detect, construct modules, wire event bus, start loop
 │   ├── GameLoop.js             # State machine, fixed-step clock, rules (count/outs/runs), orchestration
@@ -53,7 +55,7 @@ baseball/
 │       ├── RendererFactory.js  # WebGL2 / WebGPU construction + post-processing per backend
 │       ├── FieldBuilder.js     # Grass, dirt, mound, plate, chalk, walls, foul poles
 │       ├── StadiumBuilder.js   # Bowl, seats (instanced), crowd billboards, light towers, video board
-│       ├── BallFactory.js      # Ball mesh, procedural stitch texture & normal map, trail
+│       ├── BallFactory.js      # Ball mesh, seam + 108 stitch geometry, seam orientation, trail, contact shadow
 │       ├── Players.js          # Stylized pitcher/batter/catcher/umpire rigs + procedural animation
 │       ├── Cameras.js          # Batting, pitching, chase, center-field, replay cameras + shake
 │       ├── Particles.js        # Dust / chalk / dirt pool (PointsMaterial, RGBA vertex colors)
@@ -777,7 +779,7 @@ Skubal is included so that the **vs-LHP** splits matter. Raleigh switch-hits: he
 1. **Construction: `RendererFactory.create(canvas, { backend })`.**
    - WebGL2 settings: `antialias: true`, `powerPreference: 'high-performance'`, `outputColorSpace = SRGBColorSpace`, `toneMapping = ACESFilmicToneMapping`, `toneMappingExposure = 1.05`, `shadowMap.type = PCFSoftShadowMap`, `setPixelRatio(min(devicePixelRatio, 2))`.
    - WebGPU: `await renderer.init()`, with the same tone mapping.
-   - Expose `backend` so post-processing picks `EffectComposer` (RenderPass → UnrealBloomPass with strength 0.55, radius 0.4, threshold 0.85 → OutputPass) or `PostProcessing` (TSL bloom) for WebGPU.
+   - Expose `backend` so post-processing picks `EffectComposer` (RenderPass → UnrealBloomPass with strength 0.6, radius 0.45, threshold 1.6 → OutputPass; the high threshold keeps the lit plate and chalk from blooming, so only the lamp banks glow) or `PostProcessing` (TSL bloom) for WebGPU.
 2. **Environment and atmosphere.**
    - Night sky: a big inverted sphere with a vertical gradient canvas texture and sparse stars.
    - `scene.fog = new FogExp2(0x0a1324, 0.0022)`.
@@ -788,7 +790,7 @@ Skubal is included so that the **vs-LHP** splits matter. Raleigh switch-hits: he
      - The ortho shadow frustum is fitted tightly to the plate → mound corridor (x ± 6 m, z from 3 to −21 m), so the ball and bat cast crisp shadows. The ball shadow is a key depth cue.
      - `shadow.bias = −0.0002`, `normalBias = 0.02`.
    - **Fill:** a `HemisphereLight` (sky 0x9fb6ff, ground 0x2b3a1f, intensity 0.35).
-   - **Six light towers:** each has an emissive lamp-grid mesh (emissive intensity 6, which feeds bloom), a non-shadowed `SpotLight` aimed at the infield for specular sweep, and a soft additive **light-cone** mesh (open `ConeGeometry`, `MeshBasicMaterial` with `transparent`, `depthWrite: false`, `blending: AdditiveBlending` and opacity 0.035). That gives volumetric haze without custom shaders.
+   - **Six light towers:** each has an emissive lamp-grid mesh (emissive intensity 6, which feeds bloom), and a non-shadowed `SpotLight` (decay 2) aimed at the infield or outfield. Additive light-cone haze meshes are deferred to the Phase 5 polish pass, together with the ambient dust motes.
    - **Cinematic mode** (replays) enables a second shadow-casting spotlight on the batter.
 4. **Field (`FieldBuilder`).** All `MeshStandardMaterial`; textures are generated at boot by `textures.js`.
    - **Grass:** 2048 canvas, mow stripes (alternating 4 m bands, ±6 % luminance) and a checker in the outfield. Roughness 0.92. Normal map from blurred noise.
@@ -802,23 +804,25 @@ Skubal is included so that the **vs-LHP** splits matter. Raleigh switch-hits: he
    - **Video board:** a `CanvasTexture` mirrors the StatCast summary after each pitch and updates only on events.
 6. **Ball (`BallFactory`).**
    - Geometry: `SphereGeometry(0.03689, 48, 32)`, `MeshPhysicalMaterial` (roughness 0.55, sheen 0.3).
-   - **Stitch texture:** the seam curve on the unit sphere (a + b = 1; a = 0.62 and b = 0.38 to start, tuned visually):
+   - **Seam and stitches as geometry** (Phase 2 change from the planned equirectangular texture, which distorts badly near the poles). The seam curve on the unit sphere (a + b = 1; a = 0.62, b = 0.38):
 
      ```math
      \mathbf s(t)=\big(a\cos t+b\cos3t,\;a\sin t-b\sin3t,\;2\sqrt{ab}\,\sin2t\big)
      ```
 
-     |**s**| = a + b by construction. Sample 216 points and convert each to equirectangular (lon, lat). Draw red "V" stitch pairs perpendicular to the curve tangent onto a 2048 × 1024 canvas. Generate a matching normal map from the same strokes.
-   - Seam orientation per pitch: a 4-seam presents the seams across the spin axis, a 2-seam along it. This sets the initial quaternion.
-   - **Trail:** a ring buffer of 48 positions drawn as a `Line2`, or a ribbon fallback in WebGPU, tinted by `PITCH_TYPES[code].color`. Shown on replays and as an optional assist.
+     |**s**| = a + b by construction. A thin `TubeGeometry` follows it as the seam groove, and 108 double stitches (216 instanced thin boxes) form red V's pointing along the seam. The leather gets a subtle procedural color and normal map. The ball stays sharp at any zoom, with no UV distortion.
+   - **Seam orientation per pitch:** the equator perpendicular to local z crosses the seam 4 times, so z is the **4-seam** spin axis. The **2-seam** axis is found once at load by searching 400 directions for the fewest seam crossings. Each pitch rotates the ball so its presentation axis lines up with the release spin vector: FF, FC and breaking balls present 4-seam; SI, CH and FS present 2-seam.
+   - **Trail:** a camera-facing ribbon rebuilt each frame from the last 48 positions (vertex RGBA, additive). It works on both backends without `Line2`. It's tinted by `PITCH_TYPES[code].color`, shown on replays, and available as an assist.
    - A blob **contact shadow** under the ball adds clarity at night.
 7. **Players (`Players.js`).** Stylized PBR figures built from capsule and box primitives (uniform, helmet with clearcoat, glove), each with a hierarchy of `Object3D` joints.
    - **Pitcher animation:** a timeline (set → leg lift → stride → arm accel → release → follow-through). The physics release time t_rel is the anchor, and the clip is time-warped so the hand reaches **p₀** exactly at t_rel.
    - **Batter animation:** stance → load (on pitcher leg lift) → stride → swing. The bat mesh is driven every frame by `SwingModel.pose(t)`, which is why the visible barrel and the physics bat are always the same object.
    - The catcher frames the mitt toward the predicted plate crossing 0.25 s before arrival. The umpire plays a call animation.
 8. **Cameras (`Cameras.js`).**
-   - **Batting:** over the shoulder, behind the batter on the open side. Position (−h_b·0.55, 1.62, 1.35) m, looking at (0.15·h_b, 1.15, −18.4), FOV 38°. Subtle 1.5 Hz idle sway.
-   - **Pitching:** behind the mound. Position (0, 2.45, −22.6), looking at (0, 0.75, 0), FOV 30°.
+   - **Batting:** over the shoulder, behind the batter on the open side. Position (−h_b·0.55, 1.62, 1.35) m, looking at (0.15·h_b, 1.15, −18.4), FOV 38°. Subtle idle sway.
+   - **Pitching:** behind and above the mound so the mound and rubber stay in frame. Position (0, 3.6, −27.5), looking at (0, 0.85, −1), FOV 34°.
+   - **Broadcast:** the classic center-field TV angle, best for seeing break. Position (−1.1, 4.6, −38), looking at (0, 0.95, 0), FOV 11°.
+   - **FOV fit:** preset FOVs are vertical FOVs for 16:9. On narrower screens (portrait phones), the vertical FOV widens to keep the same horizontal coverage, up to 80°.
    - **Chase (batted ball):** a critically damped spring follows a point 35 % behind the ball along its velocity, with a dynamic FOV of 45° to 60° tied to EV. Switches to the **center-field high cam** when the hang time is over 2.5 s.
    - **Replay:** 1/4 to 1/8 time over the plate (side view), true spin rate (§2.12).
    - **Shake** on contact: amplitude ∝ EV/120 for 120 ms, decaying sine.
@@ -996,7 +1000,7 @@ One `AudioContext` is created and resumed on the first user gesture.
 |---|---|---|
 | 0 ✅ | `core/*`, `PlayerStats.js` (+ data verification pass), `package.json`, test harness | `npm test` passes the roster and core tests |
 | 1 ✅ | `PhysicsEngine.js` complete, headless | Every test in §2.11 passes; calibration fits every roster pitch within 0.5 in |
-| 2 | `StadiumRenderer` with field, lights, shadows, ball, and cameras playing back solved pitches | 60 fps on an integrated GPU at DPR 1.5; the ball visibly breaks; the stitch spin reads correctly in replay |
+| 2 ✅ | `StadiumRenderer` with field, lights, shadows, ball, and cameras playing back solved pitches | Ball visibly breaks ✅; stitch spin reads correctly in replay ✅; 47 draw calls / 125k triangles per frame ✅. The 60 fps target on an integrated GPU still needs checking on real hardware: the build environment only has software WebGL. |
 | 3 | `GameLoop` + `InputController` + `TelemetryUI` (pitching mode end-to-end, CPU batter) | A full at-bat is playable; the HUD zone aligns with the 3D plate within 2 px |
 | 4 | Batting mode (PCI, timing, `SwingModel` ↔ bat animation sync), CPU pitcher | Spray and launch angle respond to timing and PCI as in the §2.10 table |
 | 5 | `AudioEngine`, particles, players, crowd, video board, replays, bloom | Visual and audio polish pass; no GC spikes > 2 ms during pitch flight |

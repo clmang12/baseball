@@ -1,0 +1,88 @@
+/* HUD base styles. Ported from reference/statcast_boilerplate.html (dark StatCast look).
+   Phase 3 extends this with the full scoreboard, arsenal, meters and StatCast panel. */
+
+:root {
+  --bg: #050b14;
+  --panel: rgba(15, 23, 42, 0.86);
+  --panel-border: rgba(51, 65, 85, 0.55);
+  --text: #f1f5f9;
+  --muted: #94a3b8;
+  --c-pitch: #22d3ee;
+  --c-spin: #c084fc;
+  --c-ev: #fbbf24;
+  --c-la: #34d399;
+  --c-dist: #fb7185;
+  --c-zone: #facc15;
+  --accent: #3b82f6;
+  --radius: 10px;
+  --font: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.stage { position: fixed; inset: 0; }
+.game-canvas { display: block; width: 100%; height: 100%; }
+
+.hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.loading {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  z-index: 50;
+  transition: opacity 0.4s;
+}
+.loading.done { opacity: 0; pointer-events: none; }
+
+/* Phase 2 demo overlay */
+.demo-card { position: absolute; left: 16px; top: 16px; padding: 14px 16px; min-width: 260px; max-width: calc(100vw - 32px); }
+.demo-card .who { font-size: 15px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
+.demo-card .pitch { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-weight: 700; }
+.demo-card .chip { width: 10px; height: 10px; border-radius: 50%; }
+.demo-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; margin-top: 10px; }
+.demo-grid .v { font-family: var(--mono); font-size: 20px; font-weight: 800; }
+.demo-grid .u { font-size: 11px; color: var(--muted); margin-left: 3px; font-weight: 700; }
+.demo-help { position: absolute; left: 16px; bottom: 16px; padding: 10px 14px; font-size: 12px; color: var(--muted); max-width: calc(100vw - 32px); }
+.demo-help kbd { font-family: var(--mono); color: var(--text); background: rgba(255,255,255,0.08); border-radius: 4px; padding: 1px 5px; margin-right: 2px; }
+.demo-stats { position: absolute; right: 16px; top: 16px; padding: 8px 12px; font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: pre; }
+.demo-view { position: absolute; right: 16px; bottom: 16px; padding: 8px 12px; font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+
+@media (max-width: 640px) {
+  .demo-help { display: none; }
+  .demo-card { min-width: 0; }
+}

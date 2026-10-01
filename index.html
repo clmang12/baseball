@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pitcher vs Batter</title>
+  <meta name="description" content="3D pitcher-versus-batter duel with Magnus-effect ball flight and StatCast telemetry.">
+  <link rel="stylesheet" href="styles/hud.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/build/three.module.min.js",
+        "three/addons/": "./vendor/three/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="stage" class="stage"></div>
+  <div id="hud" class="hud" aria-live="polite"></div>
+  <div id="loading" class="loading">Building the ballpark…</div>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
