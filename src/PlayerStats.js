@@ -413,11 +413,12 @@ export function scatterModel(control, throws) {
   const k = 1.25 - c;
   const w = meterGreenHalfWidth(control);
   const hp = handSign(throws);
-  return (tau, reticleIn) => {
+  // `effort` (meter overdrive, +1.2 mph) doubles the timing component.
+  return (tau, reticleIn, { effort = false } = {}) => {
     const t = clamp(tau, -1, 1);
     const a = Math.abs(t);
     const sigmaReticle = reticleIn / 2;
-    const sigmaTiming = a <= w ? 0 : 6 * Math.pow((a - w) / 0.5, 1.5) * k;
+    const sigmaTiming = (a <= w ? 0 : 6 * Math.pow((a - w) / 0.5, 1.5) * k) * (effort ? 2 : 1);
     const s = t < 0 ? 1 : t > 0 ? -1 : 0; // early → +1 (arm side, high), late → -1 (glove side, low)
     const mag = 2.5 * a * k * s;
     return {

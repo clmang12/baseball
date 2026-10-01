@@ -81,6 +81,7 @@ graph TD
   GL --> AI[AIController.js]
   AI --> PE
   AI --> PS
+  PE --> PS
   PE --> core[core/*]
   PS --> core
   SR --> render[render/*]
@@ -92,7 +93,7 @@ graph TD
 ```
 
 Rules:
-- `PhysicsEngine` and `PlayerStats` never import Three.js, the DOM or audio.
+- `PhysicsEngine` and `PlayerStats` never import Three.js, the DOM or audio. `PhysicsEngine` imports only the pure unit-conversion and rating-curve helpers from `PlayerStats`.
 - Only `GameLoop` mutates game state. Every other module reacts to bus events or exposes pure queries.
 - `StadiumRenderer` reads trajectories (typed arrays) produced by physics. It never integrates anything.
 
@@ -346,13 +347,15 @@ The bat is a rigid cylinder swinging about a moving pivot (the hands' center of 
 
   The ball-height terms are clamped to [−45°, −12°].
 
-**Yaw.** Yaw rate is Ω_s = V_ss/R_ss, about 36 rad/s for a 76 mph swing:
+**Yaw.** Yaw rate is Ω_s = V_ss/R_ss, about 36 rad/s for a 76 mph swing. Through the hitting zone the yaw is linear:
 
 ```math
 \psi(t)=\Omega_s\,(t-t_c-T_{sw})
 ```
 
 ψ = 0 means the bat is square to the plate. ψ > 0 means the barrel is out front, so the ball is pulled.
+
+The linear part covers the last 50 ms before square and continues to ψ = 1.4 rad; contact is only possible for |ψ| ≤ 1.4. Before that, the bat accelerates uniformly from rest at the loaded position so its speed is continuous; after ψ = 1.4 it decelerates uniformly to a stop at 2.6 rad (follow-through). The renderer animates the bat from the same `pose(t)`.
 
 **Bat axis** (knob → tip):
 
@@ -361,11 +364,14 @@ The bat is a rigid cylinder swinging about a moving pivot (the hands' center of 
 \mathbf R_y(\theta)=\begin{bmatrix}\cos\theta&0&\sin\theta\\0&1&0\\-\sin\theta&0&\cos\theta\end{bmatrix}
 ```
 
-**Pivot.** The pivot is chosen so the sweet spot passes through the PCI at ψ = 0. The sweet spot rises through the zone at the attack angle:
+**Pivot.** The pivot is chosen so the sweet spot passes through the PCI at ψ = 0. Through the zone the barrel rises along the plane of the pitch:
 
 ```math
-\mathbf P=\mathbf c^{3D}-R_{ss}\,\hat{\mathbf a}(\psi{=}0)+\begin{bmatrix}0\\ R_{ss}\,\psi(t)\tan\alpha\\ 0\end{bmatrix}
+\mathbf P=\mathbf c^{3D}-R_{ss}\,\hat{\mathbf a}(\psi{=}0)+\begin{bmatrix}0\\ R_{ss}\sin\psi(t)\,\tan\alpha_{rise}\\ 0\end{bmatrix},\qquad
+\alpha_{rise}=0.7\,\mathrm{VAA}+0.3\,\alpha
 ```
+
+VAA is the pitch's descent angle at z*. Real hitters largely match the plane of the pitch, so timing errors mostly change spray, not launch. Phase 1 testing showed that rising at the full attack angle turned a perfectly aimed swing 10 ms early into a topped grounder. The attack angle α still sets the bat's velocity direction in the collision.
 
 **Velocity of a bat point** at distance s from the knob (horizontal normal **n̂**_h, tilted up by α):
 
@@ -380,7 +386,7 @@ The bat is a rigid cylinder swinging about a moving pivot (the hands' center of 
 \Delta t=(t_c+T_{sw})-t^{*}
 ```
 
-Δt < 0 is early (pull side) and Δt > 0 is late (opposite field). Every 10 ms of timing error rotates the bat about 20°, which roughly equals the change in spray angle. That is MLB-realistic.
+Δt < 0 is early (pull side) and Δt > 0 is late (opposite field). Every 10 ms of timing error rotates the bat about 20°. In the engine that moves the spray angle by roughly 10–25°, plus hook or slice from the sidespin an angled bat imparts.
 
 **Bat speed loss when mistimed:**
 
@@ -486,20 +492,22 @@ q=\frac{e-r_m}{1+r_m}\approx0.21
 
 Backspin from undercut, topspin from overcut and sidespin from barrel yaw all **emerge** from the tangential impulse. Nothing is scripted.
 
-Prototype results for an 86 mph pitch at the plate, a 75 mph bat and α = 8°:
+Engine results (Phase 1, sea level) for an 86 mph pitch arriving 31° downward, a 75 mph bat with α = 8°, and the approach taken along the relative velocity:
 
 | D (mm) | EV (mph) | LA (°) | Spin (rpm) | Distance (ft) |
 |---:|---:|---:|---:|---:|
-| −15 | 110.7 | −7.7 | 3456 (top) | ground ball |
-| 0 | 107.9 | 8.7 | 657 | 159 (liner) |
-| +10 | 103.5 | 19.7 | 1209 | 397 |
-| +18 | 98.6 | 28.8 | 2702 | 396 |
-| +25 | 93.2 | 37.3 | 4008 | 341 |
-| +35 | 83.5 | 50.5 | 5874 | 235 (pop-up) |
+| −15 | 110.7 | −7.7 | 3457 (top) | 20 (ground ball) |
+| 0 | 107.9 | 8.7 | 657 (top) | 167 (liner) |
+| +10 | 103.5 | 19.7 | 1209 | 374 |
+| +18 | 98.6 | 28.8 | 2702 | 383 |
+| +25 | 93.2 | 37.3 | 4009 | 339 |
+| +35 | 83.5 | 50.5 | 5875 | 243 (pop-up) |
 
 ### 2.11 Batted-ball flight, ground, wall, outcome
 
-**Flight.** The same ODE (§2.3) with k_M = 1, a_SSW = 0 and τ_ω = 25 s, integrated until y = r.
+**Flight.** The same ODE (§2.3) with a_SSW = 0, τ_ω = 25 s and k_M = 0.75 (`AIR.battedLiftScale`), integrated until y = r.
+
+The batted-ball lift scale was fitted in Phase 1. With full Nathan lift, carry ran 15–30 ft long against typical Statcast distances (90 mph / 30° ≈ 330 ft, 95 / 30 ≈ 365, 100 / 28 ≈ 398, 105 / 28 ≈ 422, 110 / 28 ≈ 448, 100 / 20 ≈ 370, 95 / 15 ≈ 300). A 0.75 lift scale brings all seven within 16 ft (RMS 7 ft). Pitches are unaffected because each pitch is calibrated separately (§2.5).
 
 **Ground bounce** in the contact frame of the ground (n̂ = ŷ):
 
@@ -508,7 +516,9 @@ Prototype results for an 86 mph pitch at the plate, a 75 mph bat and α = 8°:
 f_t=\max\!\left(\tfrac{5}{7},\;1-\mu_g(1+e_g)\frac{\lvert v_y\rvert}{\lVert\mathbf v_{xz}\rVert}\right)
 ```
 
-Use e_g = 0.45 and μ_g = 0.40 on grass, or e_g = 0.50 and μ_g = 0.30 on dirt. After |v_y| < 0.5 m/s the ball rolls with deceleration a = μ_r·g, where μ_r = 0.25 on grass and 0.35 on dirt.
+Use e_g = 0.45 and μ_g = 0.40 on grass, or e_g = 0.50 and μ_g = 0.30 on dirt. Spin halves at each bounce. After |v_y| < 0.5 m/s the ball rolls with deceleration a = μ_r·g + c_r·v², where μ_r = 0.25 and c_r = 0.015 m⁻¹ on grass, or μ_r = 0.35 and c_r = 0.006 m⁻¹ on dirt. Without the speed term, hard grounders rolled all the way to the wall.
+
+The surface under the ball is dirt on the mound, the plate circle (13 ft), the infield skin (within 95 ft of the mound, outside the infield grass diamond) and the warning track (last 15 ft before the wall); grass everywhere else.
 
 **Wall.** The park polygon gives the wall distance r_w(φ) and height h_w(φ), piecewise-linear in spray angle. The spray angle is φ = atan2(x, −z) (+ toward right field).
 - **Home run:** the path crosses r = r_w(φ) with y > h_w(φ).
@@ -533,34 +543,57 @@ Extras: plate speed, IVB/HB, extension, plate time, hang time, apex, spray angle
 \mathrm{hi}=\begin{cases}30+1.5(\mathrm{EV}-98)&\mathrm{EV}<100\\ \min(50,\;33+\tfrac{17}{16}(\mathrm{EV}-100))&\text{else}\end{cases}
 ```
 
-**Outcome (fielder-reach model, deterministic given the RNG).**
-- **Fielders** sit at polar positions in ft and degrees: 1B (110, +33), 2B (150, +17), SS (150, −17), 3B (115, −33), LF (290, −28), CF (320, 0), RF (290, +28).
-- **Foul:** |φ| > 45° at landing, or at the first bounce for ground balls.
-- **Air balls (LA ≥ 10°):** the nearest fielder catches it if
+**Outcome (fielder-kinematics model, deterministic).**
+
+- **Fielders** sit at polar positions in ft and degrees: P (58, 0), 1B (110, +33), 2B (150, +17), SS (150, −17), 3B (115, −33), LF (290, −28), CF (320, 0), RF (290, +28).
+- **Fielder time** to cover a distance d. Each fielder has a reaction time t_r, a reach radius ρ_f (glove plus dive), acceleration a and top speed v:
 
   ```math
-  t_{react}+\frac{\lVert\mathbf x_{land}-\mathbf x_f\rVert}{v_{run}}\le t_{hang}+0.10
+  t_f(d)=t_r+\begin{cases}\sqrt{2d'/a}&d'\le v^2/2a\\ d'/v+v/2a&\text{otherwise}\end{cases},\qquad d'=\max(0,\;d-\rho_f)
   ```
 
-  Use t_react = 0.45 s and v_run = 8.2 m/s for outfielders or 7.6 m/s for infielders. If the ball is caught it's an out. Otherwise:
-  - landing beyond 380 ft in a gap (|φ| ∈ [12°, 35°]) is a triple when the hang time is > 4 s and the ball isn't caught off the wall,
-  - landing beyond 290 ft is a double,
-  - anything else is a single.
-- **Ground balls:** integrate the roll. If any infielder can intercept along the path, compare the fielder's time plus the throw (distance to 1B ÷ 38 m/s) against the batter's time to first (4.25 s for a right-handed batter, 4.10 s for a left-handed batter). The batter is out if the fielding side is faster. Otherwise it's an infield single, or a single through the hole.
+  | Fielders | t_r (s) | ρ_f (m) | a (m/s²) | v (m/s) |
+  |---|---|---|---|---|
+  | Infielders | 0.20 | 1.6 | 6.0 | 7.6 |
+  | Pitcher | 0.35 | 1.0 | 4.5 | 6.5 |
+  | Outfielders | 0.45 | 0.9 | 4.5 | 8.2 |
 
-**Physics tests** (`tests/physics.test.js`) — tolerances come from the prototype:
+- **Air catch:** scan the flight. At every sample where the ball is at or below 2.4 m, it's caught if some fielder's t_f is at most the elapsed time. Samples beyond the wall don't count. Foul balls count only within 15 m of the foul line. A catch is OUT_FLY for LA ≥ 25°, otherwise OUT_LINE.
+- **Fair or foul:** decided where the ball first lands if that's beyond 90 ft (or where it hits the wall). Otherwise it's decided where the ball passes 90 ft, or where it stops. A ball is fair when |φ| ≤ 45°.
+- **On the ground:** the first fielder able to reach the ball's path (ball at or below 2.4 m) fields it.
+  - **Infielder:** out if the field time + 0.6 s transfer + throw to first at 38 m/s is no later than the batter's time to first (4.25 s right-handed, 4.10 s left-handed). Otherwise it's an infield single.
+  - **Outfielder** (or nobody, in which case the nearest outfielder picks it up at rest): the batter takes 2B or 3B while the throw would arrive late. The outfielder's throw is 1.0 s pickup + distance at 30 m/s effective. Each base takes 3.9 s more, and the runner wants a 0.3 s margin.
+
+**Calibration check (Phase 1).** I simulated 4,000 batted balls from an MLB-like distribution (LA ~ 𝒩(12°, 26°), EV ~ 𝒩(95 − 0.012(LA − 12)², 10) mph, spray ~ 𝒩(0, 26°)):
+
+| Measure | Simulated | MLB |
+|---|---|---|
+| Barrel rate | 6.5% | ~7% |
+| HR per barrel | 0.67 | ~0.55–0.6 |
+| Ground-ball hit rate | 0.28 | ~0.24 |
+| Line-drive hit rate | 0.55 | ~0.68 |
+| BABIP | .254 | ~.290 |
+
+The test distribution's wide spray sends many fly balls toward the 330 ft foul lines, so its overall HR rate (8%) overstates what real swings will produce. Revisit once real swing data from Phase 4 is available.
+
+**Physics tests** (`tests/physics.test.js`, 30 tests):
 
 | Case | Expected |
 |---|---|
 | Spinless 95 mph release, 54 ft → plate | Plate speed 87.6 ± 0.3 mph; flight time 0.395 ± 0.01 s |
 | Release solver | Plate error < 1 mm after ≤ 5 iterations |
-| Calibration | Each roster pitch matches IVB and HB within 0.5 in |
-| 100 mph, 28°, 2000 rpm backspin, sea level | 407 ± 12 ft, hang ≈ 5.4 s |
-| 110 mph, 28°, 2500 rpm | 449 ± 12 ft |
+| Calibration | Every roster pitch, thrown, shows its published IVB and HB within 0.5 in |
+| 100 mph, 28°, 2000 rpm backspin, sea level | 392 ± 12 ft, hang 4.9 ± 0.3 s |
+| 110 mph, 28°, 2500 rpm | 435 ± 12 ft |
+| Carry vs Statcast references | Each within 20 ft, RMS < 10 ft |
 | Head-on sweet-spot collision (86 mph pitch, 75 mph bat, D = 0) | EV 107.9 ± 1 mph |
-| Undercut sweep D: −15 → +35 mm | Launch angle increases monotonically |
-| Mirror symmetry | Swapping h_b and mirroring x gives a mirrored spray and the same EV |
+| Undercut sweep D: −15 → +35 mm | Launch angle increases monotonically; undercut gives backspin |
+| Mirror symmetry | A left-handed batter against a mirrored left-handed pitcher gives the same EV/LA and mirrored spray (to 10⁻⁶) |
 | Energy | Outgoing kinetic energy in the bat frame never exceeds incoming |
+| Timing | Early pulls and late goes the other way, for both batting sides |
+| PCI height, Contact, power swing | Undercut lifts; higher Contact absorbs more error; power swing adds EV but shrinks the PCI by 20% |
+| Outcomes | HR, pop-up out, routine grounder to SS, foul, gap double, routine fly out |
+| Also | Spin construction, Savant conversion, altitude, Break scaling, velocity cap, determinism, dirt bounces, zone edges, trajectory sampling, barrel/xBA |
 
 ### 2.12 Visual ball spin (render side, documented here because it's derived from ω)
 
@@ -962,7 +995,7 @@ One `AudioContext` is created and resumed on the first user gesture.
 | Phase | Deliverable | Exit criteria |
 |---|---|---|
 | 0 ✅ | `core/*`, `PlayerStats.js` (+ data verification pass), `package.json`, test harness | `npm test` passes the roster and core tests |
-| 1 | `PhysicsEngine.js` complete, headless | Every test in §2.11 passes; calibration fits every roster pitch within 0.5 in |
+| 1 ✅ | `PhysicsEngine.js` complete, headless | Every test in §2.11 passes; calibration fits every roster pitch within 0.5 in |
 | 2 | `StadiumRenderer` with field, lights, shadows, ball, and cameras playing back solved pitches | 60 fps on an integrated GPU at DPR 1.5; the ball visibly breaks; the stitch spin reads correctly in replay |
 | 3 | `GameLoop` + `InputController` + `TelemetryUI` (pitching mode end-to-end, CPU batter) | A full at-bat is playable; the HUD zone aligns with the 3D plate within 2 px |
 | 4 | Batting mode (PCI, timing, `SwingModel` ↔ bat animation sync), CPU pitcher | Spray and launch angle respond to timing and PCI as in the §2.10 table |

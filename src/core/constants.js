@@ -29,6 +29,9 @@ export const AIR = deepFreeze({
   liftA: 2.32,                            // C_L = 1 / (liftA + liftB / S)
   liftB: 0.4,
   spinDecayTau: 25,                       // s
+  // Lift multiplier for batted balls, fitted so carry matches Statcast distance
+  // references (RMS 7 ft over 90–110 mph, 15–30°). Pitches use per-pitch calibration instead.
+  battedLiftScale: 0.75,
   scaleHeight: 8434,                      // m, for density vs altitude
   gasConstantDryAir: 287.05,              // J/(kg·K)
   seaLevelPressure: 101325,               // Pa
@@ -54,6 +57,7 @@ export const SWING = deepFreeze({
   vbaSlopeDegPerM: 40,                    // VBA change per metre of pitch height
   vbaMidHeight: 0.75,                     // m
   vbaClampDeg: [-45, -12],
+  planeMatch: 0.7,                        // fraction of the swing-path rise that follows the pitch's descent angle
   timingSpeedLossWindow: 0.040,           // s, f_t = max(0.6, 1 - 0.5 (dt / window)^2)
   timingSpeedFloor: 0.6,
   powerSwingHoldMs: 120,
@@ -87,8 +91,9 @@ export const FIELD = deepFreeze({
 });
 
 export const GROUND = deepFreeze({
-  grass: { restitution: 0.45, friction: 0.40, rolling: 0.25 },
-  dirt: { restitution: 0.50, friction: 0.30, rolling: 0.35 },
+  // Rolling deceleration = rolling·g + rollDrag·v² (grass and skipping hops slow fast rollers hard).
+  grass: { restitution: 0.45, friction: 0.40, rolling: 0.25, rollDrag: 0.015 },
+  dirt: { restitution: 0.50, friction: 0.30, rolling: 0.35, rollDrag: 0.006 },
   rollThreshold: 0.5,                     // m/s vertical speed below which the ball rolls
   wallRestitution: 0.30,
   wallTangentialKeep: 0.8,
@@ -107,28 +112,37 @@ export const PARK = deepFreeze({
   ],
 });
 
+// speed: top sprint speed (m/s); accel: m/s^2 from a standing start; react: s before the first step
+// (infielders are set and read the ball off the bat); reach: glove + dive radius (m).
 export const FIELDERS = deepFreeze([
-  { pos: '1B', distFt: 110, sprayDeg: 33, speed: 7.6 },
-  { pos: '2B', distFt: 150, sprayDeg: 17, speed: 7.6 },
-  { pos: 'SS', distFt: 150, sprayDeg: -17, speed: 7.6 },
-  { pos: '3B', distFt: 115, sprayDeg: -33, speed: 7.6 },
-  { pos: 'LF', distFt: 290, sprayDeg: -28, speed: 8.2 },
-  { pos: 'CF', distFt: 320, sprayDeg: 0, speed: 8.2 },
-  { pos: 'RF', distFt: 290, sprayDeg: 28, speed: 8.2 },
+  { pos: 'P', distFt: 58, sprayDeg: 0, speed: 6.5, accel: 4.5, react: 0.35, reach: 1.0, infield: true },
+  { pos: '1B', infield: true, distFt: 110, sprayDeg: 33, speed: 7.6, accel: 6.0, react: 0.20, reach: 1.6 },
+  { pos: '2B', infield: true, distFt: 150, sprayDeg: 17, speed: 7.6, accel: 6.0, react: 0.20, reach: 1.6 },
+  { pos: 'SS', infield: true, distFt: 150, sprayDeg: -17, speed: 7.6, accel: 6.0, react: 0.20, reach: 1.6 },
+  { pos: '3B', infield: true, distFt: 115, sprayDeg: -33, speed: 7.6, accel: 6.0, react: 0.20, reach: 1.6 },
+  { pos: 'LF', infield: false, distFt: 290, sprayDeg: -28, speed: 8.2, accel: 4.5, react: 0.45, reach: 0.9 },
+  { pos: 'CF', infield: false, distFt: 320, sprayDeg: 0, speed: 8.2, accel: 4.5, react: 0.45, reach: 0.9 },
+  { pos: 'RF', infield: false, distFt: 290, sprayDeg: 28, speed: 8.2, accel: 4.5, react: 0.45, reach: 0.9 },
 ]);
 
 export const FIELDING = deepFreeze({
-  reactionTime: 0.45,                     // s
-  catchGrace: 0.10,                       // s
+  catchGrace: 0,                          // s of slack allowed when a fielder arrives just after the ball
   throwSpeed: 38,                         // m/s
+  transferTime: 0.6,                      // s, glove to release (infield)
+  outfieldTransferTime: 1.0,              // s, pick up a moving ball, set and throw
+  outfieldThrowSpeed: 30,                 // m/s effective, including arc and cut-off
   timeToFirst: { R: 4.25, L: 4.10 },      // s, home to first
+  timeBetweenBases: 3.9,                  // s, each additional base
+  extraBaseMargin: 0.3,                   // s the runner wants in hand before taking a base
+  catchHeight: 2.4,                       // m, highest a fielder can catch / field the ball
+  foulPlayableDepth: 15,                  // m of foul territory where pop-ups can be caught
 });
 
 export const SIM = deepFreeze({
   pitchStep: 0.001,                       // s
   battedStep: 0.002,                      // s
-  eventRefineWindow: 0.2,                 // s before an event where steps shrink back to 1 ms
   maxPitchTime: 1.5,                      // s
+  pitchEndZ: 0.9,                         // m, catcher's glove depth behind the plate tip
   maxBattedTime: 12,                      // s
   visualSpinCapRevPerSec: 9,
 });
