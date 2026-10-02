@@ -381,8 +381,8 @@ export const maxBatSpeedMph = (power) => 62 + 22 * unit(power);
 export const timingWindowMs = (vision) => 25 + 45 * unit(vision);
 /** Width of the "perfect" band inside which timing error snaps to zero, ms. */
 export const perfectBandMs = (vision) => 3 + 5 * unit(vision);
-/** Distance after release at which the pitch type is revealed, ft. */
-export const recognitionFt = (vision) => 20 + 25 * unit(vision);
+/** Distance after release at which the pitch type is read, ft (better vision reads it earlier). */
+export const recognitionFt = (vision) => 45 - 25 * unit(vision);
 
 // Pitcher
 /** Maximum release speed the Velocity rating allows, mph. */

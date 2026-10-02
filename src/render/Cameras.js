@@ -9,8 +9,10 @@ const ease = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
 export const VIEWS = {
   // Over the batter's back shoulder, looking out at the release point.
   batting: (hb = 1) => ({ pos: [-hb * 0.55, 1.62, 1.35], target: [0.15 * hb, 1.15, -18.4], fov: 38 }),
-  // Behind and above the mound, looking in at the plate.
-  pitching: () => ({ pos: [0, 3.6, -27.5], target: [0, 0.85, -1], fov: 34 }),
+  // Gameplay pitching camera: behind the mound on a long lens so the zone is big enough to aim at.
+  pitching: () => ({ pos: [0, 2.4, -24.5], target: [0, 0.85, -0.3], fov: 13, maxWiden: 1.5 }),
+  // Wide cinematic view from behind and above the mound.
+  mound: () => ({ pos: [0, 3.6, -27.5], target: [0, 0.85, -1], fov: 34 }),
   // Classic TV centre-field camera: long lens, slightly off-centre — shows break best.
   broadcast: () => ({ pos: [-1.1, 4.6, -38], target: [0, 0.95, 0], fov: 11 }),
   // Side-on over the plate for slow-motion replays.
@@ -18,6 +20,8 @@ export const VIEWS = {
   // High behind home: follow fly balls into the outfield.
   highHome: () => ({ pos: [0, 24, 30], target: [0, 0, -80], fov: 50 }),
   centerfield: () => ({ pos: [0, 32, -150], target: [0, 0, -40], fov: 45 }),
+  // Batted-ball broadcast camera: fixed high behind home; the target and zoom follow the ball.
+  track: () => ({ pos: [0, 15, 24], target: [0, 2, -30], fov: 50 }),
 };
 
 export class CameraRig {
@@ -41,6 +45,7 @@ export class CameraRig {
   /** Switch to a preset (or 'chase') with an eased transition of `duration` seconds. */
   set(mode, opts = {}, duration = 0.6) {
     this.mode = mode;
+    this._trackTarget = null;
     this.opts = opts;
     const goal = mode === 'chase' ? this._chaseGoal() : this._preset(mode, opts);
     this.from = { pos: this.cur.pos.clone(), target: this.cur.target.clone(), fov: this.cur.fov };
@@ -52,6 +57,7 @@ export class CameraRig {
 
   _preset(mode, opts) {
     const v = (VIEWS[mode] ?? VIEWS.pitching)(opts.hb);
+    this.maxWiden = v.maxWiden ?? Infinity;
     return { pos: new THREE.Vector3(...v.pos), target: new THREE.Vector3(...v.target), fov: v.fov };
   }
 
@@ -84,7 +90,9 @@ export class CameraRig {
   fitFov(fov) {
     const ref = 16 / 9;
     if (this.camera.aspect >= ref) return fov;
-    const half = Math.atan(Math.tan((fov * Math.PI) / 360) * (ref / this.camera.aspect));
+    // Gameplay views cap the widening so the strike zone stays large enough to aim at.
+    const widen = Math.min(ref / this.camera.aspect, this.maxWiden ?? Infinity);
+    const half = Math.atan(Math.tan((fov * Math.PI) / 360) * widen);
     return Math.min(80, (half * 360) / Math.PI);
   }
 
@@ -101,7 +109,24 @@ export class CameraRig {
 
   update(dt) {
     this.idle += dt;
-    if (this.mode === 'chase') {
+    if (this.mode === 'track') {
+      // Position eases to the fixed broadcast spot; the look-at point and zoom chase the ball.
+      const goal = this.to;
+      if (this.blend < 1) this.blend = Math.min(1, this.blend + dt / Math.max(1e-6, this.blendDur));
+      const e = ease(this.blend);
+      this.cur.pos.lerpVectors(this.from.pos, goal.pos, e);
+      if (this.follow) {
+        const k = 1 - Math.exp(-dt * 7);
+        const aim = this._tmp.copy(this.follow.pos);
+        aim.y *= 0.8;
+        if (!this._trackTarget) this._trackTarget = this.from.target.clone();
+        this._trackTarget.lerp(aim, k);
+        this.cur.target.lerpVectors(this.from.target, this._trackTarget, e);
+        const dist = this.cur.pos.distanceTo(this.follow.pos);
+        const fovGoal = Math.max(20, Math.min(52, (2 * Math.atan(26 / Math.max(1, dist)) * 180) / Math.PI));
+        this.cur.fov += (fovGoal - this.cur.fov) * k;
+      }
+    } else if (this.mode === 'chase') {
       // Critically damped follow toward the moving goal.
       const goal = this._chaseGoal();
       const k = 1 - Math.exp(-dt * 4);

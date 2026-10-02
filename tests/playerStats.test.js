@@ -93,7 +93,7 @@ test('rating curves are monotone with the documented end points', () => {
   monotone(PS.maxBatSpeedMph);
   monotone(PS.timingWindowMs);
   monotone(PS.perfectBandMs);
-  monotone(PS.recognitionFt);
+  monotone(PS.recognitionFt, false);
   monotone(PS.fastballCapMph);
   monotone(PS.breakMultiplier);
   monotone(PS.meterGreenHalfWidth);

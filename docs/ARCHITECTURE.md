@@ -689,7 +689,7 @@ C, P and V are ratings from 1 to 99. Contact and Power are picked by the pitcher
 | Per-swing speed | V_ss = V_max·(0.90 + 0.10·charge)·f_t·(1 + 𝒩(0, 0.015)) | `charge` ∈ [0, 1] comes from mouse-down duration (power swing vs. contact swing). A power swing shrinks R_pci by 20 %. |
 | Timing window (display) | W = 25 + 45·V/99 ms | Width of the on-screen timing band |
 | Perfect band | If \|Δt\| ≤ (3 + 5·V/99)/2 ms, snap Δt to 0 | The vision reward |
-| Pitch recognition | Pitch type and color ring appear at d_rec = 20 + 25·V/99 ft after release | Earlier read for high-vision hitters |
+| Pitch recognition | Pitch type and color ring appear at d_rec = 45 − 25·V/99 ft after release (99 Vision reads it 20 ft out of the hand) | Earlier read for high-vision hitters. The CPU batter extrapolates the pitch without spin from this point (§7.3). |
 
 ### 4.3 Pitcher rating → physics curves
 
@@ -814,7 +814,9 @@ Skubal is included so that the **vs-LHP** splits matter. Raleigh switch-hits: he
    - **Seam orientation per pitch:** the equator perpendicular to local z crosses the seam 4 times, so z is the **4-seam** spin axis. The **2-seam** axis is found once at load by searching 400 directions for the fewest seam crossings. Each pitch rotates the ball so its presentation axis lines up with the release spin vector: FF, FC and breaking balls present 4-seam; SI, CH and FS present 2-seam.
    - **Trail:** a camera-facing ribbon rebuilt each frame from the last 48 positions (vertex RGBA, additive). It works on both backends without `Line2`. It's tinted by `PITCH_TYPES[code].color`, shown on replays, and available as an assist.
    - A blob **contact shadow** under the ball adds clarity at night.
-7. **Players (`Players.js`).** Stylized PBR figures built from capsule and box primitives (uniform, helmet with clearcoat, glove), each with a hierarchy of `Object3D` joints.
+7. **Players (`Players.js`).** Stylized PBR figures built from capsule primitives (team-coloured jersey, clearcoat helmet, gloves), posed each frame with two-bone IK for arms and legs.
+   - **Phase 3 (built):** the batter, scaled by height and placed in the box for his batting side. In a loaded stance, the bat blends into `SwingModel.pose(t)` over the first 90 ms of the swing. The torso yaws with the swing and the front foot strides.
+   - **Phase 5:** pitcher windup, catcher, umpire, and the **seven fielders**. Fielders run the routes and timings the outcome model computed (`fielderTime`, the catch or fielding point, the throw to a base), so what you see matches the call. An optional glTF hook will let a user-supplied rigged model replace any role's procedural figure.
    - **Pitcher animation:** a timeline (set → leg lift → stride → arm accel → release → follow-through). The physics release time t_rel is the anchor, and the clip is time-warped so the hand reaches **p₀** exactly at t_rel.
    - **Batter animation:** stance → load (on pitcher leg lift) → stride → swing. The bat mesh is driven every frame by `SwingModel.pose(t)`, which is why the visible barrel and the physics bat are always the same object.
    - The catcher frames the mitt toward the predicted plate crossing 0.25 s before arrival. The umpire plays a call animation.
@@ -910,42 +912,45 @@ Skubal is included so that the **vs-LHP** splits matter. Raleigh switch-hits: he
 
 ### 7.1 `GameLoop.js` — state machine & clock
 
+As built in Phase 3 (pitching mode). `GameLoop` has no DOM dependency: the renderer is optional and the HUD reads `snapshot()` each frame, so `tests/game.test.js` plays whole half-innings in Node.
+
 ```mermaid
 stateDiagram-v2
-  [*] --> Boot
-  Boot --> Menu: assets & calibration ready
-  Menu --> PrePitch: start(matchup, mode)
-  PrePitch --> Aiming: user pitching / CPU picks pitch
-  Aiming --> Meter: user clicks to lock aim
-  Meter --> Windup: meter locked (τ)
-  PrePitch --> Windup: CPU pitcher (user batting)
-  Windup --> PitchFlight: t = t_rel (trajectory solved)
-  PitchFlight --> Contact: findContact() hit
-  PitchFlight --> PitchResult: take / whiff / foul tip
-  Contact --> BattedFlight
-  BattedFlight --> PlayResult: outcome classified & played back
-  PitchResult --> CountUpdate
-  PlayResult --> CountUpdate
-  CountUpdate --> PrePitch: at-bat continues
-  CountUpdate --> AtBatOver: K / BB / ball in play
-  AtBatOver --> PrePitch: next batter / same duel
-  AtBatOver --> GameOver: 3 outs (Showdown) or user quits
-  GameOver --> Menu
+  [*] --> menu
+  menu --> aim: start(pitcher, lead-off batter, difficulty)
+  aim --> meter: click / Space / lift finger (locks aim + reticle radius)
+  meter --> windup: needle locked (τ, effort) or 1.1 s timeout (τ = +1)
+  note right of windup: pitch, CPU decision, swing, contact,\nbatted ball and outcome all solved here
+  windup --> flight: t = release (0.85 s)
+  flight --> batted: t = contact time
+  flight --> result: no contact, ball reaches the glove
+  batted --> result: catch / landing / HR (≤ 7 s)
+  result --> replay: R (1/8 speed, side camera, true spin)
+  replay --> result
+  result --> aim: click / 3.4 s (next batter if the PA ended)
+  result --> gameover: 3 outs
+  gameover --> menu
 ```
 
-The loop runs on `requestAnimationFrame`:
-- dt_real = min(now − last, 0.1).
-- The sim clock is t_sim += dt_real·timeScale, where timeScale = 1, or 0.125–0.25 in replays.
-- Physics doesn't step per frame. Trajectories are solved at the event (release, contact).
-- The per-frame state checks only time thresholds (t_rel, t*, landing).
-- The loop pauses on `visibilitychange`.
+**Clock.**
+- The loop runs on `requestAnimationFrame` with dt_real = min(now − last, 0.1). Sim time advances by dt_real·timeScale (1, or 0.125 in replays).
+- Input events carry `event.timeStamp`, which `simTimeAt()` maps onto the sim clock, so meter locks don't depend on frame rate.
+- Physics never steps per frame. Each pitch is resolved completely when the meter locks, and the phases only *present* it: the ball appears at release, the batted ball takes over at contact, and the ball is hidden at the catch.
+- Pause stops the clock. The game also pauses automatically when the tab is hidden.
 
-Rules:
-- Count logic, including fouls with two strikes.
-- **Showdown mode:** a half-inning at the user's chosen score and inning (default ▲9th, 1 out, as in the boilerplate).
-- Simple runner advancement: walk forces; single +1 (runner from 2B scores); double +2; triple clears; HR clears.
+**Pitch meter.** The needle x sweeps 0 → 1 in 1.1 s. The green centre is at x = 0.7, and τ = (x − 0.7)/0.35 (negative = early). The green half-width in τ units is `meterGreenHalfWidth(Control)`. x ∈ [0.9, 0.995) is the **max-effort** zone: +1.2 mph, timing scatter doubled, τ = (x − 0.95)/0.25. Grades are PERFECT / EARLY / LATE / WAY EARLY / WAY LATE / MAX EFFORT / OVERTHROWN.
 
-All transitions emit bus events: `pitch:selected`, `pitch:released`, `swing:started`, `contact`, `play:result`, `count:changed`, `atbat:over`. The renderer, UI and audio subscribe to these.
+**Rules** (`src/game/rules.js`, pure and tested):
+- Count: a foul can't make strike three; a caught foul tip can.
+- Walks force runners only when forced.
+- Hits: a single moves runners up one, except a runner on second scores; a double moves runners up two; triples and home runs clear the bases.
+- Ground outs: a ball hit at ≥ 85 mph with a runner on first and fewer than two outs is a double play. Otherwise it's a fielder's choice with forced runners moving up, or a plain ground out with runners advancing.
+- Fly outs: a sacrifice fly scores the runner from third when the ball travels ≥ 250 ft with fewer than two outs.
+- **Showdown scenario:** ▲9th, 1 out, the home team up 4–3, as in the boilerplate. The lineup rotates through the four batters, starting with the chosen lead-off. The game ends at 3 outs with a verdict: save converted, tied, or blown save.
+
+**Bus events:** `game:start`, `batter:up`, `phase`, `pitch:selected`, `pitch:thrown`, `pitch:released`, `contact`, `catch`, `result` (carries the full StatCast payload), `pause`, `game:over`.
+
+**Cameras during play:** the gameplay **pitching** camera is behind the mound on a 13° lens, so the zone is large enough to aim at. On contact the camera blends to **track**: a fixed spot high behind home whose look-at point and zoom follow the ball (FOV 20–52°). A chase camera was tried first and dropped, because it dove toward the turf. `V` toggles pitching and broadcast views.
 
 ### 7.2 `InputController.js`
 
@@ -953,9 +958,11 @@ Pointer movement → `screenToPlate` → the aim or PCI world target, with expon
 
 | Mode | Input | Intent |
 |---|---|---|
-| Pitch | Keys 1–5 | Select pitch |
-| Pitch | Click | Lock aim (starts the meter) |
-| Pitch | Click / Space | Lock meter |
+| Pitch | Keys 1–5 or click a pitch | Select pitch (re-settles the reticle) |
+| Pitch | Click / Space (touch: lift finger) | Lock aim (starts the meter) |
+| Pitch | Click / Space / tap | Lock meter |
+| Pitch | Arrow keys | Nudge aim 4 cm |
+| Any | `R` / `V` / `P` or `Esc` / `Enter` | Replay, camera, pause, continue |
 | Bat | Mouse down | Swing start (t_c) |
 | Bat | Hold > 120 ms before release | Power swing |
 | Bat | Release with no swing started | Take |
@@ -971,11 +978,21 @@ Inputs are timestamped with `event.timeStamp`, mapped to sim time so frame jitte
 - Target from a 13-cell grid: 9 zone cells plus 4 chase cells, with count-based weights.
 - Simulated meter error τ ~ 𝒩(0, 0.22·(1.2 − Ctl/99)), passed through the same scatter model.
 
-**CPU batter:**
-- **Perceived location:** p̃ = lerp(**p**_spinless, **p**_true, 0.55 + 0.45·Vis/99) + 𝒩(0, σ_v), with σ_v = 1 + 5·(1 − Vis/99) in. The spinless extrapolation is taken from the recognition point. **Break fools hitters through physics**, not dice.
-- **Swing decision:** a logistic on (in-zone probability of p̃, count, pitch family).
-- **Timing:** Δt ~ 𝒩(μ, σ_t), with σ_t = 6 + 14·(1 − C/99) ms. μ shifts early by 0.35·(v_prev − v_now)/mph·ms after a velocity change (changeup effect).
-- The PCI goes at p̃, and the swing then uses the exact same `SwingModel` / `findContact` as the user's swing.
+**CPU batter** (built in Phase 3; tuning lives in `AIController.BALANCE`):
+- **Perceived location** at the ideal contact depth:
+
+  ```math
+  \tilde{\mathbf p}=\mathrm{lerp}\big(\mathbf p_{spinless},\ \mathbf p_{true},\ 0.35+0.5\,V/99\big)+\mathcal N(0,\sigma_v),\qquad \sigma_v=\big(2+4(1-V/99)\big)\ \text{in}
+  ```
+
+  The spinless path is extrapolated from the recognition point, 45 − 25·V/99 ft after release. **Break fools hitters through physics, not dice:** sweepers and splinkers get chased, and high-ride fastballs get swung under.
+- **Swing decision:** in the zone (ball radius included), swing 70%. That rises by 18 points with two strikes, ×0.85 at 0-0 and ×0.3 at 3-0. Out of the zone, chase 0.32·e^(−d/0.08 m)·(1.35 − V/99), ×1.6 with two strikes.
+- **Timing:** Δt ~ 𝒩(μ, σ_t), with σ_t = 10 + 16·(1 − C/99) ms. μ = −0.8 ms per mph of speed drop from the previous pitch (early on a changeup after a fastball).
+- **Power swing:** charge 0.8·P/99 in hitter's counts, 0 with two strikes, 0.3·P/99 otherwise.
+- **Difficulty** (Rookie / Pro / All-Star / MVP) scales σ_t, σ_v and chase rate.
+- The PCI goes at p̃, and the swing then uses the exact same `createSwing` / `findContact` / `resolveCollision` path as a human swing.
+
+**Balance check** (`tests/game.test.js`, 40 half-innings, an average human pitcher simulated): contact per swing 76% (MLB ~76%), K 17%, BB 5%, HR 7% of plate appearances (right for Judge, Ohtani and Raleigh), 3.15 pitches per PA. Hits per PA run high, at 37%: the elite lineup's hard contact (mean EV 94.5 mph, median LA 19°) yields a .41 BABIP. Difficulty settings shift this in either direction. The test asserts broad guard rails.
 
 ### 7.4 `AudioEngine.js` (Web Audio)
 
@@ -1001,9 +1018,9 @@ One `AudioContext` is created and resumed on the first user gesture.
 | 0 ✅ | `core/*`, `PlayerStats.js` (+ data verification pass), `package.json`, test harness | `npm test` passes the roster and core tests |
 | 1 ✅ | `PhysicsEngine.js` complete, headless | Every test in §2.11 passes; calibration fits every roster pitch within 0.5 in |
 | 2 ✅ | `StadiumRenderer` with field, lights, shadows, ball, and cameras playing back solved pitches | Ball visibly breaks ✅; stitch spin reads correctly in replay ✅; 47 draw calls / 125k triangles per frame ✅. The 60 fps target on an integrated GPU still needs checking on real hardware: the build environment only has software WebGL. |
-| 3 | `GameLoop` + `InputController` + `TelemetryUI` (pitching mode end-to-end, CPU batter) | A full at-bat is playable; the HUD zone aligns with the 3D plate within 2 px |
+| 3 ✅ | `GameLoop` + `InputController` + `TelemetryUI` (pitching mode end-to-end, CPU batter), rules, basic batter figure | Full half-innings play in the browser and headless. The zone is drawn from the projected plate corners, so it aligns exactly. 69 tests. |
 | 4 | Batting mode (PCI, timing, `SwingModel` ↔ bat animation sync), CPU pitcher | Spray and launch angle respond to timing and PCI as in the §2.10 table |
-| 5 | `AudioEngine`, particles, players, crowd, video board, replays, bloom | Visual and audio polish pass; no GC spikes > 2 ms during pitch flight |
+| 5 | `AudioEngine`, particles, pitcher/catcher/umpire, **seven animated fielders**, optional glTF character hook, crowd, replays | Visual and audio polish pass; no GC spikes > 2 ms during pitch flight |
 | 6 | WebGPU path, perf autoscaler, accessibility, README | `?gpu=webgpu` renders on Chrome; reduced-motion respected |
 
 Open tuning knobs, deliberately centralized in `core/constants.js`: C_D0, the e(d) falloff, η_C, the V_max curve, the fielder speeds and the reticle/meter constants.

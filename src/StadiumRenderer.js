@@ -8,6 +8,7 @@ import { buildField } from './render/FieldBuilder.js';
 import { buildStadium, drawVideoBoard } from './render/StadiumBuilder.js';
 import { Ball } from './render/BallFactory.js';
 import { CameraRig } from './render/Cameras.js';
+import { BatterFigure } from './render/Players.js';
 import { PLATE, SIM } from './core/constants.js';
 import { PITCH_TYPES } from './PlayerStats.js';
 
@@ -58,6 +59,10 @@ export class StadiumRenderer {
 
     this.ball = new Ball({ anisotropy: aniso });
     this.ball.addTo(this.scene);
+
+    this.batter = new BatterFigure();
+    this.batter.group.visible = false;
+    this.scene.add(this.batter.group);
 
     this.updateVideoBoard({ title: 'STATCAST', subtitle: 'LIVE TRACKING SYSTEM', metrics: [] });
     this._ro.observe(this.container);
@@ -139,9 +144,20 @@ export class StadiumRenderer {
     this.ball.resetTrail('#ffffff');
   }
 
+  /** Shows the batter in his box (team colours, height, batting side). */
+  setBatter(batter, hb) {
+    this.batter.setBatter(batter, hb);
+  }
+
+  /** Drives the batter's bat from a SwingModel on the pitch clock (null = take / stance). */
+  attachSwing(swing, clockOffset) {
+    this.batter.attachSwing(swing, clockOffset);
+  }
+
   clearPlayback() {
     this.playback = null;
     this.ball.setVisible(false);
+    this.ball.resetTrail();
   }
 
   setTimeScale(ts) {
@@ -162,6 +178,7 @@ export class StadiumRenderer {
    */
   update(tSim, dtReal) {
     this._updateBall(tSim);
+    if (this.batter.group.visible) this.batter.update(tSim);
     this.rig.update(dtReal);
     this.ball.updateTrail(this.camera, this.trailEnabled);
     this.gfx.render(this.scene, this.camera);
@@ -189,7 +206,7 @@ export class StadiumRenderer {
     }
     this.lastSimTime = tSim;
     if (t <= tr.end) this.ball.pushTrail(this._v.set(X[0], X[1], X[2]));
-    if (pb.kind === 'batted' && this.rig.mode === 'chase') {
+    if (pb.kind === 'batted' && (this.rig.mode === 'chase' || this.rig.mode === 'track')) {
       this.rig.setFollow(this._v.set(X[0], X[1], X[2]), new THREE.Vector3(X[3], X[4], X[5]));
     }
   }
